@@ -2,7 +2,7 @@ name: Courier Live Simulation
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 * * * *"
 
   workflow_dispatch:
 
