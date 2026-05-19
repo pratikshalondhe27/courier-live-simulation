@@ -80,38 +80,42 @@ def insert_new_shipments():
     is_sunday   = (ist_weekday == 6)
     day         = now.day
 
-    # --- Base shipments per run (weekday ~430/day target) ---
-    base_min, base_max = 3, 6
+    # --- Calibrated to match history: ~420 shipments/day on weekdays ---
+    # 96 runs/day target avg: 4.4/run
 
-    # Sunday — very low activity (~40% of normal)
-    if is_sunday:
-        base_min, base_max = 1, 2
-
-    # Month-end spike (25th onwards) — corporate billing cycle rush
-    if day >= 25:
-        base_min += 1
-        base_max += 2
-
-    # Night cutoff (9pm–8am IST) — warehouses closed
+    # Night cutoff (9pm–8am IST) — shop closed
     if ist_hour < 8 or ist_hour >= 21:
-        base_min, base_max = 0, 1
+        base_min, base_max = 0, 1        # avg 0.5 × 44 runs = 22
 
-    # Morning rush (10am–12pm IST) — bulk orders dispatched
+    # Opening (8am–10am IST)
+    elif 8 <= ist_hour < 10:
+        base_min, base_max = 3, 5        # avg 4.0 × 8 runs = 32
+
+    # Morning rush (10am–12pm IST) — peak walk-ins
     elif 10 <= ist_hour <= 12:
-        base_min, base_max = 5, 8
+        base_min, base_max = 9, 11       # avg 10  × 8 runs = 80
 
     # Afternoon (12pm–4pm IST) — steady flow
     elif 12 < ist_hour <= 16:
-        base_min, base_max = 3, 5
+        base_min, base_max = 6, 8        # avg 7   × 16 runs = 112
 
-    # Evening rush (4pm–7pm IST) — last-mile pickups
+    # Evening rush (4pm–7pm IST) — end of day pickups
     elif 16 < ist_hour <= 19:
-        base_min, base_max = 5, 7
+        base_min, base_max = 9, 11       # avg 10  × 12 runs = 120
 
-    # Apply Sunday multiplier after hour adjustments
+    # Winding down (7pm–9pm IST)
+    else:
+        base_min, base_max = 3, 5        # avg 4.0 × 8 runs  = 32
+
+    # Sunday — ~30% less (minimal walk-ins)
     if is_sunday and not (ist_hour < 8 or ist_hour >= 21):
-        base_min = max(0, base_min - 2)
+        base_min = max(0, base_min - 3)
         base_max = max(1, base_max - 3)
+
+    # Month-end spike (25th+) — billing cycle, e-commerce returns
+    if day >= 25 and not (ist_hour < 8 or ist_hour >= 21):
+        base_min += 1
+        base_max += 2
 
     shipment_count = random.randint(base_min, base_max)
 
