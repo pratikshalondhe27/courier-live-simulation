@@ -70,7 +70,7 @@ customers = customer_response.data
 def insert_new_shipments():
     shipment_rows = []
     now = datetime.now()
-    shipment_count = random.randint(20, 40)
+    shipment_count = random.randint(3, 6)   # 96 runs/day × ~4.5 avg = ~430 rows/day ≈ history rate
 
     for i in range(shipment_count):
         customer = random.choice(customers)
