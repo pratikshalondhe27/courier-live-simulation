@@ -71,30 +71,47 @@ def insert_new_shipments():
     shipment_rows = []
     now = datetime.now()
 
-    # --- Realistic business patterns (mirrors history data logic) ---
-    hour    = now.hour
-    weekday = now.weekday()   # 0=Mon, 6=Sun
-    day     = now.day
+    # --- IST time (GitHub Actions runs on UTC, India = UTC+5:30) ---
+    ist_hour    = (now.hour + 5) % 24 + (1 if now.minute >= 30 else 0)
+    ist_weekday = now.weekday()   # 0=Mon, 6=Sun
 
-    # Base: 3-6 per run  (~430 shipments/day on weekdays)
+    # In India, Saturday is a working day for courier companies
+    # Only Sunday is off-peak
+    is_sunday   = (ist_weekday == 6)
+    day         = now.day
+
+    # --- Base shipments per run (weekday ~430/day target) ---
     base_min, base_max = 3, 6
 
-    # Weekend dip (Sat/Sun) — ~30% fewer, same as history
-    if weekday >= 5:
-        base_min, base_max = 1, 3
+    # Sunday — very low activity (~40% of normal)
+    if is_sunday:
+        base_min, base_max = 1, 2
 
-    # Month-end spike (day 25+) — ~33% more, same as history
+    # Month-end spike (25th onwards) — corporate billing cycle rush
     if day >= 25:
         base_min += 1
         base_max += 2
 
-    # Night slowdown (10pm - 6am) — minimal courier activity
-    if hour < 6 or hour >= 22:
+    # Night cutoff (9pm–8am IST) — warehouses closed
+    if ist_hour < 8 or ist_hour >= 21:
         base_min, base_max = 0, 1
 
-    # Business hours peak (9am - 7pm) — slight boost
-    elif 9 <= hour <= 19:
-        base_max += 1
+    # Morning rush (10am–12pm IST) — bulk orders dispatched
+    elif 10 <= ist_hour <= 12:
+        base_min, base_max = 5, 8
+
+    # Afternoon (12pm–4pm IST) — steady flow
+    elif 12 < ist_hour <= 16:
+        base_min, base_max = 3, 5
+
+    # Evening rush (4pm–7pm IST) — last-mile pickups
+    elif 16 < ist_hour <= 19:
+        base_min, base_max = 5, 7
+
+    # Apply Sunday multiplier after hour adjustments
+    if is_sunday and not (ist_hour < 8 or ist_hour >= 21):
+        base_min = max(0, base_min - 2)
+        base_max = max(1, base_max - 3)
 
     shipment_count = random.randint(base_min, base_max)
 
