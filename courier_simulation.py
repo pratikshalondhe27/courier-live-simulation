@@ -70,7 +70,33 @@ customers = customer_response.data
 def insert_new_shipments():
     shipment_rows = []
     now = datetime.now()
-    shipment_count = random.randint(3, 6)   # 96 runs/day × ~4.5 avg = ~430 rows/day ≈ history rate
+
+    # --- Realistic business patterns (mirrors history data logic) ---
+    hour    = now.hour
+    weekday = now.weekday()   # 0=Mon, 6=Sun
+    day     = now.day
+
+    # Base: 3-6 per run  (~430 shipments/day on weekdays)
+    base_min, base_max = 3, 6
+
+    # Weekend dip (Sat/Sun) — ~30% fewer, same as history
+    if weekday >= 5:
+        base_min, base_max = 1, 3
+
+    # Month-end spike (day 25+) — ~33% more, same as history
+    if day >= 25:
+        base_min += 1
+        base_max += 2
+
+    # Night slowdown (10pm - 6am) — minimal courier activity
+    if hour < 6 or hour >= 22:
+        base_min, base_max = 0, 1
+
+    # Business hours peak (9am - 7pm) — slight boost
+    elif 9 <= hour <= 19:
+        base_max += 1
+
+    shipment_count = random.randint(base_min, base_max)
 
     for i in range(shipment_count):
         customer = random.choice(customers)
