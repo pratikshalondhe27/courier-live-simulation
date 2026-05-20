@@ -180,6 +180,8 @@ customers = customer_response.data
 # =========================================================
 
 def insert_new_shipments():
+    # STATUS FLOW (6 stages for Power BI dashboard):
+    # 3=Pending → 5=Arrived at Hub → 2=In Transit → 6=Out for Delivery → 1=Delivered / 4=Failed
     shipment_rows = []
     now_utc = datetime.now(timezone.utc)       # UTC (for scheduling logic)
     now     = now_utc + timedelta(hours=5, minutes=30)  # IST = UTC+5:30 (for storing)
@@ -321,13 +323,13 @@ def insert_new_shipments():
     # This was the cause of GitHub Actions pipeline failures at night!
     if shipment_rows:
         supabase.table("fact_shipments").insert(shipment_rows).execute()
-        print(f" {shipment_count} new shipments inserted {season_label}")
+        print(f"✅ {shipment_count} new shipments inserted {season_label}")
     else:
-        print("  0 shipments this run (off-hours). Skipping insert.")
+        print("⏭️  0 shipments this run (off-hours). Skipping insert.")
 
 
 # =========================================================
-# 2. UPDATE PENDING → IN TRANSIT
+# 2. UPDATE PENDING → ARRIVED AT HUB
 # =========================================================
 
 def update_pending_shipments():
@@ -335,40 +337,76 @@ def update_pending_shipments():
     rows = response.data
 
     for row in rows:
+        supabase.table("fact_shipments").update({"status_id": 5}).eq(
+            "shipment_id", row["shipment_id"]
+        ).execute()
+
+    print(f"{len(rows)} Pending -> Arrived at Hub updated")
+
+
+# =========================================================
+# 3. UPDATE ARRIVED AT HUB → IN TRANSIT
+# =========================================================
+
+def update_hub_shipments():
+    response = supabase.table("fact_shipments").select("shipment_id").eq("status_id", 5).limit(12).execute()
+    rows = response.data
+
+    for row in rows:
         supabase.table("fact_shipments").update({"status_id": 2}).eq(
             "shipment_id", row["shipment_id"]
         ).execute()
 
-    print(f"{len(rows)} Pending -> In Transit updated")
+    print(f"{len(rows)} Arrived at Hub -> In Transit updated")
 
 
 # =========================================================
-# 3. UPDATE IN TRANSIT → DELIVERED
+# 4. UPDATE IN TRANSIT → OUT FOR DELIVERY
 # =========================================================
 
-def update_delivered_shipments():
-    response = supabase.table("fact_shipments").select("*").eq("status_id", 2).limit(20).execute()
+def update_out_for_delivery():
+    response = supabase.table("fact_shipments").select("shipment_id").eq("status_id", 2).limit(10).execute()
     rows = response.data
 
     for row in rows:
-        delayed = bool(np.random.choice([True, False], p=[0.18, 0.82]))
-        delay_days = random.randint(1, 3) if delayed else 0
+        supabase.table("fact_shipments").update({"status_id": 6}).eq(
+            "shipment_id", row["shipment_id"]
+        ).execute()
 
-        service_id = row["service_type_id"]
-        sla = service_sla.get(service_id, 3)
+    print(f"{len(rows)} In Transit -> Out for Delivery updated")
 
-        pickup_date = datetime.fromisoformat(row["pickup_date"])
+
+# =========================================================
+# 5. UPDATE OUT FOR DELIVERY → DELIVERED / FAILED
+# (Also handles legacy status_id=2 for backward compat)
+# =========================================================
+
+def update_delivered_shipments():
+    # Handle Out for Delivery (new flow) + old In-Transit records (backward compat)
+    r6 = supabase.table("fact_shipments").select("*").eq("status_id", 6).limit(15).execute()
+    r2 = supabase.table("fact_shipments").select("*").eq("status_id", 2).limit(5).execute()
+    rows = r6.data + r2.data
+
+    for row in rows:
+        delayed      = bool(np.random.choice([True, False], p=[0.18, 0.82]))
+        delay_days   = random.randint(1, 3) if delayed else 0
+        failed       = bool(np.random.choice([True, False], p=[0.03, 0.97]))
+
+        service_id   = row["service_type_id"]
+        sla          = service_sla.get(service_id, 3)
+
+        pickup_date   = datetime.fromisoformat(row["pickup_date"])
         delivery_date = pickup_date + timedelta(days=sla + delay_days)
 
         supabase.table("fact_shipments").update({
-            "status_id":      1,
-            "delivery_date":  delivery_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            "days_taken":     (delivery_date - pickup_date).days,
-            "is_delayed":     delayed,
-            "delay_reason_id": random.randint(1, 5) if delayed else None,
+            "status_id":       4 if failed else 1,   # 4=Failed, 1=Delivered
+            "delivery_date":   delivery_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            "days_taken":      (delivery_date - pickup_date).days,
+            "is_delayed":      delayed,
+            "delay_reason_id": random.randint(1, 5) if (delayed or failed) else None,
         }).eq("shipment_id", row["shipment_id"]).execute()
 
-    print(f"{len(rows)} In Transit -> Delivered updated")
+    print(f"{len(rows)} Out for Delivery -> Delivered/Failed updated")
 
 
 # =========================================================
@@ -418,12 +456,14 @@ def insert_new_location():
 
 if __name__ == "__main__":
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}] Starting live simulation...")
+    print("Status flow: Pending(3) → Arrived at Hub(5) → In Transit(2) → Out for Delivery(6) → Delivered(1)/Failed(4)")
 
-    insert_new_shipments()
-    update_pending_shipments()
-    update_delivered_shipments()
-    insert_new_customer()
-    insert_new_location()
+    insert_new_shipments()       # New orders → Pending
+    update_pending_shipments()   # Pending → Arrived at Hub
+    update_hub_shipments()       # Arrived at Hub → In Transit
+    update_out_for_delivery()    # In Transit → Out for Delivery
+    update_delivered_shipments() # Out for Delivery → Delivered/Failed
+    insert_new_customer()        # Occasional new customer
+    insert_new_location()        # Rare new location
 
     print("Live simulation completed successfully.")
-
