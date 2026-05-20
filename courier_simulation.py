@@ -426,3 +426,4 @@ if __name__ == "__main__":
     insert_new_location()
 
     print("Live simulation completed successfully.")
+
