@@ -1,5 +1,5 @@
 # courier_simulation.py
-# Runs every 5 mins via GitHub Actions to simulate live courier operations - updated
+# Runs every 5 mins via GitHub Actions to simulate live courier operations
 
 import random
 from datetime import datetime, timedelta, timezone
@@ -57,6 +57,118 @@ route_distance = {
 }
 
 # =========================================================
+# INDIAN FESTIVAL / SEASONAL MULTIPLIER
+# =========================================================
+# GitHub Actions runs on cloud — your PC being OFF doesn't stop this!
+# Multipliers stack on top of base volume + growth trend.
+#
+# Pattern for each festival:
+#   PRE-SEASON  : +40–80% (gifting orders pile up before the day)
+#   FESTIVAL DAY: +20–30% (last-mile deliveries, same-day orders)
+#   POST-SEASON : -15–25% (hangover/slowdown after the rush)
+# =========================================================
+
+def get_seasonal_multiplier(date):
+    """
+    Returns a float multiplier based on Indian courier seasonality.
+    1.0 = normal day, 1.5 = 50% more, 0.85 = 15% less.
+    """
+    m  = date.month
+    d  = date.day
+
+    # ----------------------------------------------------------
+    # DIWALI SEASON (Oct 15 – Nov 5 approx, peak Indian courier)
+    # ----------------------------------------------------------
+    if (m == 10 and d >= 15) or (m == 11 and d <= 5):
+        # Pre-Diwali surge: Oct 15–Oct 30 (gifting, online orders)
+        if m == 10 and 15 <= d <= 30:
+            return 1.80   # +80% — biggest spike of the year
+        # Diwali days: Oct 31 – Nov 2
+        elif (m == 10 and d >= 31) or (m == 11 and d <= 2):
+            return 1.30   # +30% — same-day deliveries
+        # Post-Diwali dip: Nov 3–5
+        else:
+            return 0.80   # -20% — quiet after festival
+
+    # ----------------------------------------------------------
+    # DUSSEHRA / NAVRATRI (Oct 1–14)
+    # ----------------------------------------------------------
+    elif m == 10 and 1 <= d <= 14:
+        if d <= 9:       # Navratri garba shopping rush
+            return 1.35  # +35%
+        else:            # Dussehra day and after
+            return 1.60  # +60% (Dussehra gifting + ecom sale)
+
+    # ----------------------------------------------------------
+    # RAKSHA BANDHAN (Aug 7-19 approx, varies by year)
+    # Gift hampers, sweets, clothing deliveries
+    # ----------------------------------------------------------
+    elif m == 8 and 7 <= d <= 19:
+        if 7 <= d <= 15:   # Pre-Rakhi rush
+            return 1.50    # +50%
+        else:              # Post-Rakhi slowdown
+            return 0.85    # -15%
+
+    # ----------------------------------------------------------
+    # INDEPENDENCE DAY (Aug 15) — minor boost
+    # ----------------------------------------------------------
+    elif m == 8 and d == 15:
+        return 1.25        # +25%
+
+    # ----------------------------------------------------------
+    # HOLI (Mar 10-18 approx) — gifting + return season
+    # ----------------------------------------------------------
+    elif m == 3 and 10 <= d <= 18:
+        if d <= 14:
+            return 1.40   # +40% pre-Holi
+        else:
+            return 0.82   # -18% post-Holi
+
+    # ----------------------------------------------------------
+    # NEW YEAR SEASON (Dec 26 – Jan 5)
+    # ----------------------------------------------------------
+    elif (m == 12 and d >= 26) or (m == 1 and d <= 5):
+        return 1.30        # +30% festive gifting + returns
+
+    # ----------------------------------------------------------
+    # REPUBLIC DAY (Jan 26) — minor spike
+    # ----------------------------------------------------------
+    elif m == 1 and d == 26:
+        return 1.20        # +20%
+
+    # ----------------------------------------------------------
+    # EID / RAMZAN SEASON (Mar-Apr, approx 10-day window)
+    # Dates shift yearly — use March 25 – April 10 as proxy
+    # ----------------------------------------------------------
+    elif (m == 3 and d >= 25) or (m == 4 and d <= 10):
+        return 1.45        # +45% (gifting, clothing, food hampers)
+
+    # ----------------------------------------------------------
+    # VALENTINES WEEK (Feb 7-14) — gifts, flowers
+    # ----------------------------------------------------------
+    elif m == 2 and 7 <= d <= 14:
+        return 1.25        # +25%
+
+    # ----------------------------------------------------------
+    # SUMMER SLOWDOWN (May–June) — heat slows retail
+    # ----------------------------------------------------------
+    elif m in (5, 6):
+        return 0.90        # -10% seasonal dip
+
+    # ----------------------------------------------------------
+    # MONSOON DIP (Jul–Aug early) — logistics challenges
+    # ----------------------------------------------------------
+    elif m == 7 or (m == 8 and d < 7):
+        return 0.88        # -12% (roads flooded, delays)
+
+    # ----------------------------------------------------------
+    # NORMAL MONTHS
+    # ----------------------------------------------------------
+    else:
+        return 1.0
+
+
+# =========================================================
 # FETCH EXISTING CUSTOMERS
 # =========================================================
 
@@ -84,58 +196,70 @@ def insert_new_shipments():
     # --- Calibrated to match history: ~420 shipments/day on weekdays ---
     # 96 runs/day target avg: 4.4/run
 
-    # Night cutoff (9pm-8am IST) - shop closed
+    # Night cutoff (9pm–8am IST) — shop closed
     if ist_hour < 8 or ist_hour >= 21:
-        base_min, base_max = 0, 1        # avg 0.5 x 44 runs = 22
+        base_min, base_max = 0, 1        # avg 0.5 × 44 runs = 22
 
-    # Opening (8am-10am IST)
+    # Opening (8am–10am IST)
     elif 8 <= ist_hour < 10:
-        base_min, base_max = 3, 5        # avg 4.0 x 8 runs = 32
+        base_min, base_max = 3, 5        # avg 4.0 × 8 runs = 32
 
-    # Morning rush (10am-12pm IST) - peak walk-ins
+    # Morning rush (10am–12pm IST) — peak walk-ins
     elif 10 <= ist_hour <= 12:
-        base_min, base_max = 9, 11       # avg 10  x 8 runs = 80
+        base_min, base_max = 9, 11       # avg 10  × 8 runs = 80
 
-    # Afternoon (12pm-4pm IST) - steady flow
+    # Afternoon (12pm–4pm IST) — steady flow
     elif 12 < ist_hour <= 16:
-        base_min, base_max = 6, 8        # avg 7   x 16 runs = 112
+        base_min, base_max = 6, 8        # avg 7   × 16 runs = 112
 
-    # Evening rush (4pm-7pm IST) - end of day pickups
+    # Evening rush (4pm–7pm IST) — end of day pickups
     elif 16 < ist_hour <= 19:
-        base_min, base_max = 9, 11       # avg 10  x 12 runs = 120
+        base_min, base_max = 9, 11       # avg 10  × 12 runs = 120
 
-    # Winding down (7pm-9pm IST)
+    # Winding down (7pm–9pm IST)
     else:
-        base_min, base_max = 3, 5        # avg 4.0 x 8 runs  = 32
+        base_min, base_max = 3, 5        # avg 4.0 × 8 runs  = 32
 
-    # Sunday - ~30% less (minimal walk-ins)
+    # Sunday — ~30% less (minimal walk-ins)
     if is_sunday and not (ist_hour < 8 or ist_hour >= 21):
         base_min = max(0, base_min - 3)
         base_max = max(1, base_max - 3)
 
-    # Month-end spike (25th+) - billing cycle, e-commerce returns
+    # Month-end spike (25th+) — billing cycle, e-commerce returns
     if day >= 25 and not (ist_hour < 8 or ist_hour >= 21):
         base_min += 1
         base_max += 2
 
     # -------------------------------------------------------
-    # BUSINESS GROWTH TREND - ~4% per month (realistic startup)
+    # BUSINESS GROWTH TREND — ~4% per month (realistic startup)
     # Simulation started: May 20, 2026
     # Growth compounds daily: 4% / 30 days = ~0.133% per day
-    # After 1 month  -> +4%  (~417/day)
-    # After 3 months -> +12% (~448/day)
-    # After 6 months -> +27% (~508/day)
+    # After 1 month  → +4%  (~417/day)
+    # After 3 months → +12% (~448/day)
+    # After 6 months → +27% (~508/day)
     # -------------------------------------------------------
     simulation_start = datetime(2026, 5, 20, tzinfo=timezone.utc)
     days_elapsed     = max(0, (now_utc - simulation_start).days)
-    growth_rate      = 0.00133          # 0.133%/day = 4%/month
+    growth_rate      = 0.00133          # 0.133%/day ≈ 4%/month
     growth_factor    = 1.0 + (growth_rate * days_elapsed)
-    growth_factor    = min(growth_factor, 2.0)  # cap at 2x (approx 25 months)
+    growth_factor    = min(growth_factor, 2.0)  # cap at 2× (≈ 25 months)
 
     base_min = int(base_min * growth_factor)
     base_max = int(base_max * growth_factor)
 
+    # -------------------------------------------------------
+    # INDIAN FESTIVAL / SEASONAL MULTIPLIER
+    # Stacks on top of growth trend and weekday/weekend logic
+    # -------------------------------------------------------
+    seasonal_factor = get_seasonal_multiplier(now)
+    base_min = int(base_min * seasonal_factor)
+    base_max = int(base_max * seasonal_factor)
+    # Ensure at least 0 during night even after multiplier
+    base_min = max(0, base_min)
+    base_max = max(1, base_max)
+
     shipment_count = random.randint(base_min, base_max)
+    season_label   = f"(seasonal x{seasonal_factor})" if seasonal_factor != 1.0 else ""
 
     for i in range(shipment_count):
         customer = random.choice(customers)
@@ -154,7 +278,7 @@ def insert_new_shipments():
             random.randint(200, 2200)
         )
 
-        # Use IST time for order_date - shows proper Indian business hours in Power BI
+        # Use IST time for order_date — shows proper Indian business hours in Power BI
         order_date = now + timedelta(
             minutes=random.randint(-10, 10),
             seconds=random.randint(0, 59)
@@ -174,6 +298,7 @@ def insert_new_shipments():
             "pickup_date":   pickup_date.strftime('%Y-%m-%dT%H:%M:%S'),
             "delivery_date": None,
             "customer_id":   customer_id,
+            # Schema uses location_id, origin_city, destination_city
             "location_id":        origin[0],
             "origin_city":        origin[1],
             "destination_city":   destination[1],
@@ -196,13 +321,13 @@ def insert_new_shipments():
     # This was the cause of GitHub Actions pipeline failures at night!
     if shipment_rows:
         supabase.table("fact_shipments").insert(shipment_rows).execute()
-        print(f"OK {shipment_count} new shipments inserted")
+        print(f" {shipment_count} new shipments inserted {season_label}")
     else:
-        print("SKIP 0 shipments this run (off-hours). Skipping insert.")
+        print("  0 shipments this run (off-hours). Skipping insert.")
 
 
 # =========================================================
-# 2. UPDATE PENDING -> IN TRANSIT
+# 2. UPDATE PENDING → IN TRANSIT
 # =========================================================
 
 def update_pending_shipments():
@@ -218,7 +343,7 @@ def update_pending_shipments():
 
 
 # =========================================================
-# 3. UPDATE IN TRANSIT -> DELIVERED
+# 3. UPDATE IN TRANSIT → DELIVERED
 # =========================================================
 
 def update_delivered_shipments():
