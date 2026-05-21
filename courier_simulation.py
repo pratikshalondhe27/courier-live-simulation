@@ -330,10 +330,18 @@ def insert_new_shipments():
 
 # =========================================================
 # 2. UPDATE PENDING → ARRIVED AT HUB
+# Only shipments ordered > 2 hours ago (realistic pickup time)
 # =========================================================
 
 def update_pending_shipments():
-    response = supabase.table("fact_shipments").select("shipment_id").eq("status_id", 3).limit(15).execute()
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    cutoff  = (now_ist - timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%S')
+
+    response = supabase.table("fact_shipments") \
+        .select("shipment_id") \
+        .eq("status_id", 3) \
+        .lt("order_date", cutoff) \
+        .limit(12).execute()
     rows = response.data
 
     for row in rows:
@@ -341,15 +349,23 @@ def update_pending_shipments():
             "shipment_id", row["shipment_id"]
         ).execute()
 
-    print(f"{len(rows)} Pending -> Arrived at Hub updated")
+    print(f"{len(rows)} Pending -> Arrived at Hub (orders > 2h old)")
 
 
 # =========================================================
 # 3. UPDATE ARRIVED AT HUB → IN TRANSIT
+# Only shipments at hub > 6 hours (realistic sorting time)
 # =========================================================
 
 def update_hub_shipments():
-    response = supabase.table("fact_shipments").select("shipment_id").eq("status_id", 5).limit(12).execute()
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    cutoff  = (now_ist - timedelta(hours=6)).strftime('%Y-%m-%dT%H:%M:%S')
+
+    response = supabase.table("fact_shipments") \
+        .select("shipment_id") \
+        .eq("status_id", 5) \
+        .lt("pickup_date", cutoff) \
+        .limit(10).execute()
     rows = response.data
 
     for row in rows:
@@ -357,15 +373,23 @@ def update_hub_shipments():
             "shipment_id", row["shipment_id"]
         ).execute()
 
-    print(f"{len(rows)} Arrived at Hub -> In Transit updated")
+    print(f"{len(rows)} Arrived at Hub -> In Transit (at hub > 6h)")
 
 
 # =========================================================
 # 4. UPDATE IN TRANSIT → OUT FOR DELIVERY
+# Only shipments in transit > 1 day (realistic transit time)
 # =========================================================
 
 def update_out_for_delivery():
-    response = supabase.table("fact_shipments").select("shipment_id").eq("status_id", 2).limit(10).execute()
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    cutoff  = (now_ist - timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S')
+
+    response = supabase.table("fact_shipments") \
+        .select("shipment_id") \
+        .eq("status_id", 2) \
+        .lt("pickup_date", cutoff) \
+        .limit(8).execute()
     rows = response.data
 
     for row in rows:
@@ -373,7 +397,7 @@ def update_out_for_delivery():
             "shipment_id", row["shipment_id"]
         ).execute()
 
-    print(f"{len(rows)} In Transit -> Out for Delivery updated")
+    print(f"{len(rows)} In Transit -> Out for Delivery (in transit > 1 day)")
 
 
 # =========================================================
@@ -382,31 +406,36 @@ def update_out_for_delivery():
 # =========================================================
 
 def update_delivered_shipments():
-    # Handle Out for Delivery (new flow) + old In-Transit records (backward compat)
-    r6 = supabase.table("fact_shipments").select("*").eq("status_id", 6).limit(15).execute()
-    r2 = supabase.table("fact_shipments").select("*").eq("status_id", 2).limit(5).execute()
-    rows = r6.data + r2.data
+    # Only deliver shipments that have been Out for Delivery > 4 hours
+    now_ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    cutoff  = (now_ist - timedelta(hours=4)).strftime('%Y-%m-%dT%H:%M:%S')
+
+    r6 = supabase.table("fact_shipments").select("*").eq("status_id", 6) \
+        .lt("pickup_date", cutoff).limit(10).execute()
+    # Backward compat: old status=2 shipments that are > 2 days old
+    cutoff2 = (now_ist - timedelta(days=2)).strftime('%Y-%m-%dT%H:%M:%S')
+    r2 = supabase.table("fact_shipments").select("*").eq("status_id", 2) \
+        .lt("pickup_date", cutoff2).limit(5).execute()
+    rows = (r6.data or []) + (r2.data or [])
 
     for row in rows:
         delayed      = bool(np.random.choice([True, False], p=[0.18, 0.82]))
         delay_days   = random.randint(1, 3) if delayed else 0
         failed       = bool(np.random.choice([True, False], p=[0.03, 0.97]))
-
         service_id   = row["service_type_id"]
         sla          = service_sla.get(service_id, 3)
-
         pickup_date   = datetime.fromisoformat(row["pickup_date"])
         delivery_date = pickup_date + timedelta(days=sla + delay_days)
 
         supabase.table("fact_shipments").update({
-            "status_id":       4 if failed else 1,   # 4=Failed, 1=Delivered
+            "status_id":       4 if failed else 1,
             "delivery_date":   delivery_date.strftime('%Y-%m-%dT%H:%M:%SZ'),
             "days_taken":      (delivery_date - pickup_date).days,
             "is_delayed":      delayed,
-            "delay_reason_id": random.randint(1, 5) if (delayed or failed) else None,
+            "delay_reason_id": random.randint(1, 5) if (delayed or failed) else 0,
         }).eq("shipment_id", row["shipment_id"]).execute()
 
-    print(f"{len(rows)} Out for Delivery -> Delivered/Failed updated")
+    print(f"{len(rows)} Delivered/Failed (OFD > 4h, Transit > 2d)")
 
 
 # =========================================================
