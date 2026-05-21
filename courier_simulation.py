@@ -323,9 +323,9 @@ def insert_new_shipments():
     # This was the cause of GitHub Actions pipeline failures at night!
     if shipment_rows:
         supabase.table("fact_shipments").insert(shipment_rows).execute()
-        print(f"✅ {shipment_count} new shipments inserted {season_label}")
+        print(f"[OK] {shipment_count} new shipments inserted {season_label}")
     else:
-        print("⏭️  0 shipments this run (off-hours). Skipping insert.")
+        print("[SKIP] 0 shipments this run (off-hours).")
 
 
 # =========================================================
@@ -485,13 +485,13 @@ def insert_new_location():
 
 if __name__ == "__main__":
     print(f"[{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}] Starting live simulation...")
-    print("Status flow: Pending(3) → Arrived at Hub(5) → In Transit(2) → Out for Delivery(6) → Delivered(1)/Failed(4)")
+    print("Status flow: Pending(3) -> Hub(5) -> Transit(2) -> OFD(6) -> Delivered(1)/Failed(4)")
 
-    insert_new_shipments()       # New orders → Pending
-    update_pending_shipments()   # Pending → Arrived at Hub
-    update_hub_shipments()       # Arrived at Hub → In Transit
-    update_out_for_delivery()    # In Transit → Out for Delivery
-    update_delivered_shipments() # Out for Delivery → Delivered/Failed
+    insert_new_shipments()       # New orders -> Pending
+    update_pending_shipments()   # Pending -> Arrived at Hub
+    update_hub_shipments()       # Arrived at Hub -> In Transit
+    update_out_for_delivery()    # In Transit -> Out for Delivery
+    update_delivered_shipments() # Out for Delivery -> Delivered/Failed
     insert_new_customer()        # Occasional new customer
     insert_new_location()        # Rare new location
 
